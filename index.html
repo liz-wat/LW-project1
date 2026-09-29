@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>02 — Displaying a .glb Mesh</title>
+  <script src="https://aframe.io/releases/1.8.0/aframe.min.js"></script>
+  <style>
+    body::after {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 999;
+      background: radial-gradient(ellipse at center, transparent 52%, rgba(0, 0, 0, 0.9) 76%, rgba(0, 0, 0, 0.9) 100%);
+    }
+  </style>
+  <script>
+    AFRAME.registerComponent('scan-collision-controls', {
+      schema: {
+        speed: { default: 2 },
+        radius: { default: 0.3 }
+      },
+
+      init: function () {
+        this.keys = new Set();
+        this.raycaster = new THREE.Raycaster();
+        this.forward = new THREE.Vector3();
+        this.right = new THREE.Vector3();
+        this.direction = new THREE.Vector3();
+        this.origin = new THREE.Vector3();
+        this.up = new THREE.Vector3(0, 1, 0);
+        this.offsets = [-1.1, -0.55, 0, 0.45];
+        this.onKeyDown = (event) => {
+          const key = event.key.toLowerCase();
+          if (['w', 'a', 's', 'd', 'arrowup', 'arrowleft', 'arrowdown', 'arrowright'].includes(key)) {
+            this.keys.add(key);
+            event.preventDefault();
+          }
+        };
+        this.onKeyUp = (event) => this.keys.delete(event.key.toLowerCase());
+        this.onBlur = () => this.keys.clear();
+        window.addEventListener('keydown', this.onKeyDown);
+        window.addEventListener('keyup', this.onKeyUp);
+        window.addEventListener('blur', this.onBlur);
+      },
+
+      remove: function () {
+        window.removeEventListener('keydown', this.onKeyDown);
+        window.removeEventListener('keyup', this.onKeyUp);
+        window.removeEventListener('blur', this.onBlur);
+      },
+
+      tick: function (time, delta) {
+        if (!this.keys.size || !delta) return;
+
+        const scan = document.querySelector('[gltf-model]');
+        if (!scan || !scan.object3D.children.length) return;
+
+        this.el.object3D.getWorldDirection(this.forward).negate();
+        this.forward.y = 0;
+        if (this.forward.lengthSq() === 0) return;
+        this.forward.normalize();
+        this.right.crossVectors(this.forward, this.up).normalize();
+        this.direction.set(0, 0, 0);
+
+        if (this.keys.has('w') || this.keys.has('arrowup')) this.direction.add(this.forward);
+        if (this.keys.has('s') || this.keys.has('arrowdown')) this.direction.sub(this.forward);
+        if (this.keys.has('d') || this.keys.has('arrowright')) this.direction.add(this.right);
+        if (this.keys.has('a') || this.keys.has('arrowleft')) this.direction.sub(this.right);
+        if (this.direction.lengthSq() === 0) return;
+        this.direction.normalize();
+
+        const distance = this.data.speed * Math.min(delta, 100) / 1000;
+        let allowedDistance = distance;
+        scan.object3D.updateMatrixWorld(true);
+        this.el.object3D.updateMatrixWorld(true);
+        this.el.object3D.getWorldPosition(this.origin);
+
+        for (const offset of this.offsets) {
+          this.origin.y += offset;
+          this.raycaster.set(this.origin, this.direction);
+          this.raycaster.far = distance + this.data.radius;
+          const hit = this.raycaster.intersectObjects(scan.object3D.children, true)[0];
+          this.origin.y -= offset;
+          if (hit) allowedDistance = Math.min(allowedDistance, Math.max(0, hit.distance - this.data.radius));
+        }
+
+        this.el.object3D.position.addScaledVector(this.direction, allowedDistance);
+      }
+    });
+
+    AFRAME.registerComponent('camera-shake', {
+      schema: {
+        interval: { default: 5000 },
+        duration: { default: 220 },
+        amplitude: { default: 0.019 }
+      },
+
+      init: function () {
+        this.camera = null;
+        this.basePosition = new THREE.Vector3();
+      },
+
+      tick: function (time) {
+        if (!this.camera) {
+          this.camera = this.el.getObject3D('camera');
+          if (!this.camera) return;
+          this.basePosition.copy(this.camera.position);
+        }
+
+        const elapsed = time - this.data.interval;
+        const phase = elapsed % this.data.interval;
+        if (elapsed < 0 || phase >= this.data.duration) {
+          this.camera.position.copy(this.basePosition);
+          return;
+        }
+
+        const progress = phase / this.data.duration;
+        const envelope = Math.sin(Math.PI * progress);
+        this.camera.position.set(
+          this.basePosition.x + Math.sin(progress * Math.PI * 6) * this.data.amplitude * envelope,
+          this.basePosition.y + Math.sin(progress * Math.PI * 8) * this.data.amplitude * 0.6 * envelope,
+          this.basePosition.z
+        );
+      }
+    });
+
+    AFRAME.registerComponent('proximity-figure', {
+      schema: {
+        near: { default: 1.5 },
+        far: { default: 3.2 },
+        opacity: { default: 0.9 }
+      },
+
+      init: function () {
+        this.cameraEl = null;
+        this.cameraPosition = new THREE.Vector3();
+        this.figurePosition = new THREE.Vector3();
+
+        const canvas = document.createElement('canvas');
+        canvas.width = 128;
+        canvas.height = 256;
+        const context = canvas.getContext('2d');
+        context.fillStyle = '#000';
+        context.shadowColor = 'rgba(0, 0, 0, 0.75)';
+        context.shadowBlur = 9;
+
+        context.beginPath();
+        context.ellipse(64, 29, 13, 18, 0, 0, Math.PI * 2);
+        context.fill();
+        context.beginPath();
+        context.moveTo(49, 51);
+        context.lineTo(79, 51);
+        context.lineTo(86, 116);
+        context.lineTo(73, 132);
+        context.lineTo(76, 157);
+        context.lineTo(52, 157);
+        context.lineTo(55, 132);
+        context.lineTo(42, 116);
+        context.closePath();
+        context.fill();
+        context.lineCap = 'round';
+        context.lineWidth = 10;
+        context.beginPath();
+        context.moveTo(48, 61);
+        context.lineTo(35, 105);
+        context.lineTo(30, 137);
+        context.moveTo(80, 61);
+        context.lineTo(93, 105);
+        context.lineTo(98, 137);
+        context.stroke();
+        context.lineWidth = 13;
+        context.beginPath();
+        context.moveTo(57, 148);
+        context.lineTo(52, 205);
+        context.lineTo(45, 250);
+        context.moveTo(71, 148);
+        context.lineTo(77, 205);
+        context.lineTo(84, 250);
+        context.stroke();
+
+        this.texture = new THREE.CanvasTexture(canvas);
+      },
+
+      tick: function () {
+        const mesh = this.el.getObject3D('mesh');
+        if (!this.cameraEl) this.cameraEl = document.querySelector('[camera]');
+        if (!mesh || !this.cameraEl) return;
+
+        if (!this.material) {
+          this.material = mesh.material;
+          this.material.map = this.texture;
+          this.material.transparent = true;
+          this.material.depthWrite = false;
+          this.material.side = THREE.DoubleSide;
+          this.material.needsUpdate = true;
+        }
+
+        this.el.object3D.getWorldPosition(this.figurePosition);
+        this.cameraEl.object3D.getWorldPosition(this.cameraPosition);
+        const distancePosition = this.figurePosition.clone();
+        distancePosition.y += 0.9;
+        const distance = distancePosition.distanceTo(this.cameraPosition);
+        const amount = THREE.MathUtils.clamp((distance - this.data.near) / (this.data.far - this.data.near), 0, 1);
+        const fade = amount * amount * (3 - 2 * amount);
+        this.material.opacity = this.data.opacity * fade;
+        this.el.object3D.rotation.y = Math.atan2(
+          this.cameraPosition.x - this.figurePosition.x,
+          this.cameraPosition.z - this.figurePosition.z
+        );
+      },
+
+      remove: function () {
+        this.texture.dispose();
+      }
+    });
+
+  </script>
+</head>
+<body>
+
+  <a-scene background="color: #202025">
+
+    <!--
+      ============ ASSETS ============
+      <a-assets> is A-Frame's asset management system. Anything declared
+      here is pre-fetched and cached BEFORE the scene starts rendering,
+      which avoids models/textures popping in late or reloading when
+      reused by multiple entities. Reference it elsewhere with #id.
+    -->
+    <a-assets>
+      <a-asset-item id="duck-model" src="9_6_2026.glb"></a-asset-item>
+    </a-assets>
+
+    <!--
+      ============ THE MESH ============
+      The `gltf-model` component loads glTF/.glb files (the standard,
+      efficient format for transmitting 3D models on the web). We point
+      it at the asset above with #duck-model rather than the raw path,
+      so it reuses the cached, already-fetched copy.
+
+      glTF files are exported in "real-world" meters, which is often much
+      bigger or smaller than you expect — `scale` is normal to need.
+    -->
+    <a-entity
+      gltf-model="#duck-model"
+      position="0 1.6 -3"
+      scale="1 1 1"
+      rotation="0 180 0">
+    </a-entity>
+
+    <!-- Ground + lighting so the model has something to sit on and read as 3D. -->
+    <a-plane rotation="-90 0 0" width="20" height="20" color="#445"></a-plane>
+    <a-entity light="type: ambient; color: #BBB"></a-entity>
+    <a-entity light="type: directional; color: #FFF; intensity: 0.8" position="1 2 1"></a-entity>
+    <a-sky color="#202025"></a-sky>
+
+    <a-entity
+      geometry="primitive: plane; width: 0.9; height: 1.8"
+      material="shader: flat; transparent: true; opacity: 0.9; side: double; depthWrite: false"
+      position="2.2 0.9 -5.2"
+      proximity-figure="near: 1.5; far: 3.2; opacity: 0.9">
+    </a-entity>
+
+    <a-entity camera look-controls scan-collision-controls="speed: 2" camera-shake position="0 1.6 -1.4"></a-entity>
+
+  </a-scene>
+
+</body>
+</html>
